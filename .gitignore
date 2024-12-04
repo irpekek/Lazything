@@ -1,4 +1,4 @@
 deno.lock
 data.json
-result.json
+result*.json
 auth.txt
