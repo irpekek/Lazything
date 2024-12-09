@@ -53,7 +53,7 @@ async function getProxies(
   owner: string,
   repo: string,
   file_sha: string
-): Promise<object[]> {
+): Promise<object[] | null> {
   try {
     const response = await octo.request(
       'GET /repos/{owner}/{repo}/git/blobs/{file_sha}',
@@ -65,8 +65,11 @@ async function getProxies(
     const buffer = Buffer.from(response.data.content, 'base64');
     const dataYaml = buffer.toString('utf-8');
     const result = YAML.parse(dataYaml);
-    return result.proxies;
+    return typeof result === 'object' && 'proxies' in result
+      ? result.proxies
+      : null;
   } catch (_error) {
+    console.log(_error);
     throw new Error('Error while fetching yaml data');
   }
 }
@@ -81,7 +84,7 @@ async function findProxyRepo(domain: string) {
     throw new Error('Error while finding repo');
   }
 }
-const hostname = 'vplay.iflix.com';
+const hostname = 'quiz.int.vidio.com';
 
 const octo = new Octokit({
   auth: getAuthKey(),
@@ -89,23 +92,24 @@ const octo = new Octokit({
 const proxies: object[] = [];
 const listedPass: string[] = [];
 
-async function runCommand() {
+async function main() {
   const { items, total_count } = await findProxyRepo(hostname);
   console.log(`Found: ${total_count} repository`);
   for (const [index, value] of items.entries()) {
     const owner = value.repository.owner.login;
     const repo = value.repository.name;
     const sha = value.sha;
-    console.log(`Fetching ${index + 1} of ${total_count}`);
+    console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
     const proxiesResult = await getProxies(owner, repo, sha);
-    for (const proxy of proxiesResult) {
-      if (isTrojan(proxy)) addProxy(proxy, proxy.password);
-      if (isVmess(proxy)) addProxy(proxy, proxy.uuid);
+    if (proxiesResult) {
+      for (const proxy of proxiesResult) {
+        if (isTrojan(proxy)) addProxy(proxy, proxy.password);
+        if (isVmess(proxy)) addProxy(proxy, proxy.uuid);
+      }
     }
   }
 
-  const date = getFullDate();
-  const resultFile = `proxies ${date}.json`;
+  const resultFile = `proxies ${getFullDate()}.json`;
   Deno.writeTextFileSync(`${resultFile}`, JSON.stringify(proxies));
   console.log(`Result saved at ${resultFile}`);
 }
@@ -134,8 +138,8 @@ function getAuthKey(): string {
   return Deno.readTextFileSync('auth.txt');
 }
 
-function setAuthKey(key: string): void {
+function _setAuthKey(key: string): void {
   Deno.writeTextFileSync('auth.txt', key);
 }
 
-runCommand();
+main();
