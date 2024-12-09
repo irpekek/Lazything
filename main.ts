@@ -73,17 +73,20 @@ async function getProxies(
     throw new Error('Error while fetching yaml data');
   }
 }
+
 async function findProxyRepo(domain: string) {
   const query = `${domain} language:yaml`;
   try {
-    const response = await octo.request('GET /search/code', { q: query });
-    if (response.status !== 200)
-      throw new Error('Error while finding repo with status' + response.status);
-    return response.data;
+    const response = await octo.paginate('GET /search/code', {
+      q: query,
+      per_page: 100,
+    });
+    return response
   } catch (_error) {
     throw new Error('Error while finding repo');
   }
 }
+
 const hostname = 'quiz.int.vidio.com';
 
 const octo = new Octokit({
@@ -93,12 +96,13 @@ const proxies: object[] = [];
 const listedPass: string[] = [];
 
 async function main() {
-  const { items, total_count } = await findProxyRepo(hostname);
+  const items = await findProxyRepo(hostname);
+  const total_count = items.length
   console.log(`Found: ${total_count} repository`);
-  for (const [index, value] of items.entries()) {
-    const owner = value.repository.owner.login;
-    const repo = value.repository.name;
-    const sha = value.sha;
+  for (const [index, item] of items.entries()) {
+    const owner = item.repository.owner.login;
+    const repo = item.repository.name;
+    const sha = item.sha;
     console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
     const proxiesResult = await getProxies(owner, repo, sha);
     if (proxiesResult) {
@@ -143,3 +147,4 @@ function _setAuthKey(key: string): void {
 }
 
 main();
+// findProxyRepo(hostname)
