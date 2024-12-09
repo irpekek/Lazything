@@ -64,7 +64,7 @@ async function getProxies(
 
     const buffer = Buffer.from(response.data.content, 'base64');
     const dataYaml = buffer.toString('utf-8');
-    const result = YAML.parse(dataYaml);
+    const result = YAML.parse(dataYaml, { maxAliasCount: -1 });
     return typeof result === 'object' && 'proxies' in result
       ? result.proxies
       : null;
