@@ -1,6 +1,6 @@
 import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
-import YAML from 'yaml';
+import YAML, { YAMLError } from 'yaml';
 
 interface IGhMeta {
   name: string;
@@ -48,6 +48,9 @@ function isVmess(obj: unknown): obj is IVmessProxy {
 function isTrojan(obj: unknown): obj is ITrojanProxy {
   return obj !== null && typeof obj === 'object' && 'password' in obj;
 }
+function isYAMLError(obj: unknown): obj is YAMLError{
+  return (obj !== null && typeof obj === "object" && "code" in obj)
+}
 
 async function getProxies(
   owner: string,
@@ -69,6 +72,10 @@ async function getProxies(
       ? result.proxies
       : null;
   } catch (_error) {
+    if(isYAMLError(_error)){
+      if(_error.code === "BLOCK_AS_IMPLICIT_KEY") return null
+      if(_error.code === "DUPLICATE_KEY") return null
+    }
     console.log(_error);
     throw new Error('Error while fetching yaml data');
   }
