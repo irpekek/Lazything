@@ -197,8 +197,8 @@ async function main(): Promise<void> {
     }
   }
 
-  const resultFile = `proxies ${getFullDate()}.json`;
-  Deno.writeTextFileSync(`${resultFile}`, JSON.stringify(proxies));
+  const resultFile = `proxies ${getFullDate()}.yaml`;
+  Deno.writeTextFileSync(`${resultFile}`, YAML.stringify({proxies}));
   console.log(`Result saved at ${resultFile}`);
 }
 
