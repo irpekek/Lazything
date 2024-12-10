@@ -67,6 +67,9 @@ function isTrojan(obj: unknown): obj is ITrojanProxy {
 function isYAMLError(obj: unknown): obj is YAMLError {
   return obj !== null && typeof obj === 'object' && 'code' in obj;
 }
+function hasProxies(obj: unknown): boolean {
+  return obj !== null && typeof obj === 'object' && 'proxies' in obj;
+}
 
 async function getLatestCommitDate(
   owner: string,
@@ -91,28 +94,28 @@ async function getProxies(
   owner: string,
   repo: string,
   file_sha: string
-): Promise<object[] | null> {
+): Promise<IProxy[] | null> {
   try {
     const response = await octo.request(
       'GET /repos/{owner}/{repo}/git/blobs/{file_sha}',
       { owner, repo, file_sha }
     );
     if (response.status !== 200)
-      throw new Error(`Error while fetching with status ${response.status}`);
+      throw new Error(
+        `Error while fetching proxies with status ${response.status}`
+      );
 
     const buffer = Buffer.from(response.data.content, 'base64');
     const dataYaml = buffer.toString('utf-8');
     const result = YAML.parse(dataYaml, { maxAliasCount: -1 });
-    return typeof result === 'object' && 'proxies' in result
-      ? result.proxies
-      : null;
+    return hasProxies(result) ? result.proxies : null;
   } catch (_error) {
     if (isYAMLError(_error)) {
       if (_error.code === 'BLOCK_AS_IMPLICIT_KEY') return null;
       if (_error.code === 'DUPLICATE_KEY') return null;
     }
     console.log(_error);
-    throw new Error('Error while fetching yaml data');
+    throw new Error('Error while fetching proxies');
   }
 }
 
@@ -125,23 +128,16 @@ async function findProxyRepo(domain: string): Promise<IGhMeta[]> {
     });
     return response;
   } catch (_error) {
+    console.log(_error);
     throw new Error('Error while finding repo');
   }
 }
 
-const hostname = 'vplay.iflix.com';
-
-const octo = new Octokit({
-  auth: getAuthKey(),
-});
-const proxies: object[] = [];
-const listedPass: string[] = [];
-
-async function main() {
-  const items = await findProxyRepo(hostname);
-  // * filter items by date
+async function filterByMonths(
+  items: IGhMeta[],
+  months = 3
+): Promise<IGhMeta[]> {
   const filteredItems = [];
-  const dt = DateTime.now();
   for (const item of items) {
     const owner = item.repository.owner.login;
     const repo = item.repository.name;
@@ -149,50 +145,23 @@ async function main() {
     const itemDate = await getLatestCommitDate(owner, repo, path);
     if (itemDate) {
       const commitDate = DateTime.fromISO(itemDate).toMillis();
-      const choosenDate = dt.minus({ months: 3 }).toMillis(); // * 3 months ago
+      const choosenDate = DateTime.now().minus({ months }).toMillis(); // * 3 months ago
       if (commitDate >= choosenDate) filteredItems.push(item);
     }
   }
-
-  const total_count = filteredItems.length;
-  console.log(`Found: ${total_count} repository`);
-  for (const [index, item] of filteredItems.entries()) {
-    const owner = item.repository.owner.login;
-    const repo = item.repository.name;
-    const sha = item.sha;
-    console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
-    const proxiesResult = await getProxies(owner, repo, sha);
-    if (proxiesResult) {
-      for (const proxy of proxiesResult) {
-        if (isTrojan(proxy)) addProxy(proxy, proxy.password);
-        if (isVmess(proxy)) addProxy(proxy, proxy.uuid);
-      }
-    }
-  }
-
-  const resultFile = `proxies ${getFullDate()}.json`;
-  Deno.writeTextFileSync(`${resultFile}`, JSON.stringify(proxies));
-  console.log(`Result saved at ${resultFile}`);
+  return filteredItems;
 }
 
-function addProxy(proxy: ProxyType, password: string) {
+function saveProxy(proxy: ProxyType, password: string): void {
   // * Prevent duplicate proxy
-  const findPass = listedPass.find((e) => e === password);
-  if (!findPass) {
+  if (!listPass.has(password)) {
     proxies.push(proxy);
-    listedPass.push(password);
+    listPass.add(password);
   }
 }
 
 function getFullDate(): string {
-  const dt = Date.now();
-  const year = new Date(dt).getFullYear();
-  const date = new Date(dt).getDate();
-  const month = new Date(dt).getMonth();
-  const hour = new Date(dt).getHours();
-  const minutes = new Date(dt).getMinutes();
-  const second = new Date(dt).getSeconds();
-  return `${date}-${month}-${year} ${hour}:${minutes}:${second}`;
+  return `${DateTime.now().toFormat('dd-MM-yyyy HH:mm:ss')}`; // ex: 10-12-2024 13:35:47
 }
 
 function getAuthKey(): string {
@@ -201,6 +170,36 @@ function getAuthKey(): string {
 
 function _setAuthKey(key: string): void {
   Deno.writeTextFileSync('auth.txt', key);
+}
+
+const octo = new Octokit({ auth: getAuthKey() });
+const hostname = 'vplay.iflix.com';
+const proxies: object[] = [];
+const listPass = new Set<string>();
+
+async function main(): Promise<void> {
+  const items = await findProxyRepo(hostname);
+  // * filter items by months
+  const filteredItems = await filterByMonths(items);
+  const total_count = filteredItems.length;
+  console.log(`Found: ${total_count} repository`);
+  for (const [index, item] of filteredItems.entries()) {
+    const owner = item.repository.owner.login;
+    const repo = item.repository.name;
+    const sha = item.sha;
+    console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
+    const proxies = await getProxies(owner, repo, sha);
+    if (proxies) {
+      for (const proxy of proxies) {
+        if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
+        if (isVmess(proxy)) saveProxy(proxy, proxy.uuid);
+      }
+    }
+  }
+
+  const resultFile = `proxies ${getFullDate()}.json`;
+  Deno.writeTextFileSync(`${resultFile}`, JSON.stringify(proxies));
+  console.log(`Result saved at ${resultFile}`);
 }
 
 main();
