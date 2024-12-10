@@ -8,8 +8,22 @@ interface IGhMeta {
   sha: string;
   url: string;
   git_url: string;
-  repository: object;
+  html_url: string;
+  repository: IGhRepo;
   score: number;
+}
+interface IGhRepo {
+  id: number;
+  node_id: string;
+  name: string;
+  full_name: string;
+  private: boolean;
+  owner: IGhRepoOwner;
+}
+interface IGhRepoOwner {
+  login: string;
+  id: number;
+  node_id: string;
 }
 interface IGhUrl {
   sha: string;
@@ -48,8 +62,8 @@ function isVmess(obj: unknown): obj is IVmessProxy {
 function isTrojan(obj: unknown): obj is ITrojanProxy {
   return obj !== null && typeof obj === 'object' && 'password' in obj;
 }
-function isYAMLError(obj: unknown): obj is YAMLError{
-  return (obj !== null && typeof obj === "object" && "code" in obj)
+function isYAMLError(obj: unknown): obj is YAMLError {
+  return obj !== null && typeof obj === 'object' && 'code' in obj;
 }
 
 async function getProxies(
@@ -72,29 +86,30 @@ async function getProxies(
       ? result.proxies
       : null;
   } catch (_error) {
-    if(isYAMLError(_error)){
-      if(_error.code === "BLOCK_AS_IMPLICIT_KEY") return null
-      if(_error.code === "DUPLICATE_KEY") return null
+    if (isYAMLError(_error)) {
+      if (_error.code === 'BLOCK_AS_IMPLICIT_KEY') return null;
+      if (_error.code === 'DUPLICATE_KEY') return null;
     }
     console.log(_error);
     throw new Error('Error while fetching yaml data');
   }
 }
 
-async function findProxyRepo(domain: string) {
+async function findProxyRepo(domain: string): Promise<IGhMeta[]> {
   const query = `${domain} language:yaml`;
   try {
     const response = await octo.paginate('GET /search/code', {
       q: query,
       per_page: 100,
     });
-    return response
+    return response;
   } catch (_error) {
+    console.log(_error)
     throw new Error('Error while finding repo');
   }
 }
 
-const hostname = 'quiz.int.vidio.com';
+const hostname = 'vplay.iflix.com';
 
 const octo = new Octokit({
   auth: getAuthKey(),
@@ -104,7 +119,7 @@ const listedPass: string[] = [];
 
 async function main() {
   const items = await findProxyRepo(hostname);
-  const total_count = items.length
+  const total_count = items.length;
   console.log(`Found: ${total_count} repository`);
   for (const [index, item] of items.entries()) {
     const owner = item.repository.owner.login;
@@ -154,4 +169,3 @@ function _setAuthKey(key: string): void {
 }
 
 main();
-// findProxyRepo(hostname)
