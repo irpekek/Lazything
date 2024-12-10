@@ -1,6 +1,8 @@
 import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
 import YAML, { YAMLError } from 'yaml';
+// @deno-types="@types/luxon"
+import { DateTime } from 'luxon';
 
 interface IGhMeta {
   name: string;
@@ -66,6 +68,25 @@ function isYAMLError(obj: unknown): obj is YAMLError {
   return obj !== null && typeof obj === 'object' && 'code' in obj;
 }
 
+async function getLatestCommitDate(
+  owner: string,
+  repo: string,
+  path: string
+): Promise<string | undefined> {
+  try {
+    const response = await octo.request('GET /repos/{owner}/{repo}/commits', {
+      owner,
+      repo,
+      path,
+      per_page: 1,
+    });
+    return response.data[0].commit.committer?.date;
+  } catch (error) {
+    console.log(error);
+    throw new Error('Error getting commit date');
+  }
+}
+
 async function getProxies(
   owner: string,
   repo: string,
@@ -104,7 +125,6 @@ async function findProxyRepo(domain: string): Promise<IGhMeta[]> {
     });
     return response;
   } catch (_error) {
-    console.log(_error)
     throw new Error('Error while finding repo');
   }
 }
@@ -119,9 +139,24 @@ const listedPass: string[] = [];
 
 async function main() {
   const items = await findProxyRepo(hostname);
-  const total_count = items.length;
+  // * filter items by date
+  const filteredItems = [];
+  const dt = DateTime.now();
+  for (const item of items) {
+    const owner = item.repository.owner.login;
+    const repo = item.repository.name;
+    const path = item.path;
+    const itemDate = await getLatestCommitDate(owner, repo, path);
+    if (itemDate) {
+      const commitDate = DateTime.fromISO(itemDate).toMillis();
+      const choosenDate = dt.minus({ months: 3 }).toMillis(); // * 3 months ago
+      if (commitDate >= choosenDate) filteredItems.push(item);
+    }
+  }
+
+  const total_count = filteredItems.length;
   console.log(`Found: ${total_count} repository`);
-  for (const [index, item] of items.entries()) {
+  for (const [index, item] of filteredItems.entries()) {
     const owner = item.repository.owner.login;
     const repo = item.repository.name;
     const sha = item.sha;
