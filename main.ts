@@ -1,3 +1,4 @@
+#!/usr/bin/env -S deno run -A --ext=ts
 import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
 import YAML, { YAMLError } from 'yaml';
@@ -201,4 +202,48 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   console.log(`Result saved at ${resultFile}`);
 }
 
-fetchAndSaveProxies("vplay.iflix.com");
+// * Command Prog func
+
+function filterCommand(val: string) {
+  const month = Number(val);
+  if (Deno.args[2] && !isNaN(month)) fetchAndSaveProxies(Deno.args[2], month);
+}
+
+function printHelp(): void {
+  console.log('Usage: lazything [options] string\n')
+  console.log('Argument:\nstring \t Domain to search proxies\n')
+  console.log('Options:')
+  console.log('-k, --key <str> \t Set github key');
+  console.log('-f, --filter <num> \t Filter result by months (default = 3)');
+}
+
+function main(): void {
+  const opts = Deno.args[0];
+  const val = Deno.args[1];
+  const key = getAuthKey();
+  switch (opts) {
+    case '-k':
+      setAuthKey(val);
+      break;
+    case '--key':
+      setAuthKey(val);
+      break;
+    case '-f':
+      if (key) filterCommand(val);
+      break;
+    case '--filter':
+      if (key) filterCommand(val);
+      break;
+    case '-h':
+      printHelp();
+      break;
+    case '--help':
+      printHelp();
+      break;
+    default:
+      if (key) fetchAndSaveProxies(Deno.args[0]);
+      break;
+  }
+}
+
+main();
