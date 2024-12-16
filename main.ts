@@ -168,19 +168,18 @@ function getAuthKey(): string {
   return Deno.readTextFileSync('auth.txt');
 }
 
-function _setAuthKey(key: string): void {
+function setAuthKey(key: string): void {
   Deno.writeTextFileSync('auth.txt', key);
 }
 
 const octo = new Octokit({ auth: getAuthKey() });
-const hostname = 'vplay.iflix.com';
 const proxies: object[] = [];
 const listPass = new Set<string>();
 
-async function main(): Promise<void> {
-  const items = await findProxyRepo(hostname);
+async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
+  const items = await findProxyRepo(domain);
   // * filter items by months
-  const filteredItems = await filterByMonths(items);
+  const filteredItems = await filterByMonths(items, month);
   const total_count = filteredItems.length;
   console.log(`Found: ${total_count} repository`);
   for (const [index, item] of filteredItems.entries()) {
@@ -198,8 +197,8 @@ async function main(): Promise<void> {
   }
 
   const resultFile = `proxies ${getFullDate()}.yaml`;
-  Deno.writeTextFileSync(`${resultFile}`, YAML.stringify({proxies}));
+  Deno.writeTextFileSync(`${resultFile}`, YAML.stringify({ proxies }));
   console.log(`Result saved at ${resultFile}`);
 }
 
-main();
+fetchAndSaveProxies("vplay.iflix.com");
