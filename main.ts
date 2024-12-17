@@ -2,6 +2,8 @@
 import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
 import YAML, { YAMLError } from 'yaml';
+import { FlatCache } from 'flat-cache';
+import { userInfo } from 'node:os';
 // @deno-types="@types/luxon"
 import { DateTime } from 'luxon';
 
@@ -143,7 +145,16 @@ async function filterByMonths(
     const owner = item.repository.owner.login;
     const repo = item.repository.name;
     const path = item.path;
-    const itemDate = await getLatestCommitDate(owner, repo, path);
+    const sha = item.sha;
+    let itemDate;
+
+    if (!dateCache.get(sha)) {
+      itemDate = await getLatestCommitDate(owner, repo, path);
+      dateCache.set(sha, itemDate);
+    } else {
+      itemDate = dateCache.get(sha) as string;
+    }
+
     if (itemDate) {
       const commitDate = DateTime.fromISO(itemDate).toMillis();
       const choosenDate = DateTime.now().minus({ months }).toMillis(); // * 3 months ago
@@ -174,6 +185,23 @@ function setAuthKey(key: string): void {
 }
 
 const octo = new Octokit({ auth: getAuthKey() });
+const cacheDir = `${userInfo().homedir}/.cache/lazything/cache`
+const dateCache = new FlatCache({
+  cacheDir,
+  ttl: 1000 * 60 * 60, // 1 hour
+  lruSize: 1000, // 1000 items
+  expirationInterval: 1000 * 2,
+  cacheId: 'dateCache',
+});
+const proxyCache = new FlatCache({
+  cacheDir,
+  ttl: 1000 * 60 * 60 * 2, // 2 hour
+  lruSize: 500, // 500 items
+  expirationInterval: 1000,
+  cacheId: 'proxyCache',
+});
+dateCache.load('dateCache', cacheDir);
+proxyCache.load('proxyCache', cacheDir);
 const proxies: object[] = [];
 const listPass = new Set<string>();
 
@@ -187,8 +215,16 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
     const owner = item.repository.owner.login;
     const repo = item.repository.name;
     const sha = item.sha;
+    let proxies;
     console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
-    const proxies = await getProxies(owner, repo, sha);
+
+    if (!proxyCache.get(sha)) {
+      proxies = await getProxies(owner, repo, sha);
+      proxyCache.set(sha, proxies);
+    } else {
+      proxies = proxyCache.get(sha) as IProxy[] | null;
+    }
+
     if (proxies) {
       for (const proxy of proxies) {
         if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
@@ -196,10 +232,12 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
       }
     }
   }
-
+  dateCache.save();
+  proxyCache.save();
   const resultFile = `proxies ${getFullDate()}.yaml`;
   Deno.writeTextFileSync(`${resultFile}`, YAML.stringify({ proxies }));
   console.log(`Result saved at ${resultFile}`);
+  setTimeout(() => Deno.exit(), 3000);
 }
 
 // * Command Prog func
@@ -210,9 +248,9 @@ function filterCommand(val: string) {
 }
 
 function printHelp(): void {
-  console.log('Usage: lazything [options] string\n')
-  console.log('Argument:\nstring \t Domain to search proxies\n')
-  console.log('Options:')
+  console.log('Usage: lazything [options] string\n');
+  console.log('Argument:\nstring \t Domain to search proxies\n');
+  console.log('Options:');
   console.log('-k, --key <str> \t Set github key');
   console.log('-f, --filter <num> \t Filter result by months (default = 3)');
 }
