@@ -2,8 +2,7 @@
 import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
 import YAML, { YAMLError } from 'yaml';
-import { FlatCache } from 'flat-cache';
-import { userInfo } from 'node:os';
+import { dateCache, proxyCache, cacheDir } from './configs/cacheConfig.ts';
 // @deno-types="@types/luxon"
 import { DateTime } from 'luxon';
 
@@ -88,8 +87,7 @@ async function getLatestCommitDate(
     });
     return response.data[0].commit.committer?.date;
   } catch (error) {
-    console.log(error);
-    throw new Error('Error getting commit date');
+    throw new Error(`Failed to retrieve commit date: ${error}`);
   }
 }
 
@@ -108,17 +106,21 @@ async function getProxies(
         `Error while fetching proxies with status ${response.status}`
       );
 
-    const buffer = Buffer.from(response.data.content, 'base64');
-    const dataYaml = buffer.toString('utf-8');
-    const result = YAML.parse(dataYaml, { maxAliasCount: -1 });
-    return hasProxies(result) ? result.proxies : null;
-  } catch (_error) {
-    if (isYAMLError(_error)) {
-      if (_error.code === 'BLOCK_AS_IMPLICIT_KEY') return null;
-      if (_error.code === 'DUPLICATE_KEY') return null;
+    const contentBuffer = Buffer.from(response.data.content, 'base64');
+    const yamlContent = contentBuffer.toString('utf-8');
+    const parsedYaml = YAML.parse(yamlContent, { maxAliasCount: -1 });
+    return hasProxies(parsedYaml) ? parsedYaml.proxies : null;
+  } catch (error) {
+    if (isYAMLError(error)) {
+      if (
+        error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
+        error.code === 'DUPLICATE_KEY'
+      )
+        return null;
+      throw new Error(`YAML parsing error: ${error.message}`);
+    } else {
+      throw new Error(`Error fetching proxies: ${error}`);
     }
-    console.log(_error);
-    throw new Error('Error while fetching proxies');
   }
 }
 
@@ -130,9 +132,8 @@ async function findProxyRepo(domain: string): Promise<IGhMeta[]> {
       per_page: 100,
     });
     return response;
-  } catch (_error) {
-    console.log(_error);
-    throw new Error('Error while finding repo');
+  } catch (error) {
+    throw new Error(`Failed to find the repository: ${error}`);
   }
 }
 
@@ -140,24 +141,27 @@ async function filterByMonths(
   items: IGhMeta[],
   months = 3
 ): Promise<IGhMeta[]> {
-  const filteredItems = [];
+  const filteredItems: IGhMeta[] = [];
   for (const item of items) {
-    const owner = item.repository.owner.login;
-    const repo = item.repository.name;
-    const path = item.path;
-    const sha = item.sha;
-    let itemDate;
+    const {
+      repository: {
+        owner: { login: owner },
+        name: repo,
+      },
+      path,
+      sha,
+    } = item;
 
-    if (!dateCache.get(sha)) {
+    let itemDate = dateCache.get<string | undefined>(sha);
+
+    if (!itemDate) {
       itemDate = await getLatestCommitDate(owner, repo, path);
       dateCache.set(sha, itemDate);
-    } else {
-      itemDate = dateCache.get(sha) as string;
     }
 
     if (itemDate) {
       const commitDate = DateTime.fromISO(itemDate).toMillis();
-      const choosenDate = DateTime.now().minus({ months }).toMillis(); // * 3 months ago
+      const choosenDate = DateTime.now().minus({ months }).toMillis();
       if (commitDate >= choosenDate) filteredItems.push(item);
     }
   }
@@ -185,21 +189,7 @@ function setAuthKey(key: string): void {
 }
 
 const octo = new Octokit({ auth: getAuthKey() });
-const cacheDir = `${userInfo().homedir}/.cache/lazything/cache`
-const dateCache = new FlatCache({
-  cacheDir,
-  ttl: 1000 * 60 * 60, // 1 hour
-  lruSize: 1000, // 1000 items
-  expirationInterval: 1000 * 2,
-  cacheId: 'dateCache',
-});
-const proxyCache = new FlatCache({
-  cacheDir,
-  ttl: 1000 * 60 * 60 * 2, // 2 hour
-  lruSize: 500, // 500 items
-  expirationInterval: 1000,
-  cacheId: 'proxyCache',
-});
+
 dateCache.load('dateCache', cacheDir);
 proxyCache.load('proxyCache', cacheDir);
 const proxies: object[] = [];
@@ -207,22 +197,23 @@ const listPass = new Set<string>();
 
 async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   const items = await findProxyRepo(domain);
-  // * filter items by months
   const filteredItems = await filterByMonths(items, month);
-  const total_count = filteredItems.length;
-  console.log(`Found: ${total_count} repository`);
+  const totalCount = filteredItems.length;
+  console.log(`Found: ${totalCount} repository`);
   for (const [index, item] of filteredItems.entries()) {
-    const owner = item.repository.owner.login;
-    const repo = item.repository.name;
-    const sha = item.sha;
-    let proxies;
-    console.log(`Fetching ${index + 1} of ${total_count}: ${repo} - ${owner}`);
+    const {
+      repository: {
+        owner: { login: owner },
+        name: repo,
+      },
+      sha,
+    } = item;
 
-    if (!proxyCache.get(sha)) {
+    console.log(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
+    let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
+    if (!proxies) {
       proxies = await getProxies(owner, repo, sha);
       proxyCache.set(sha, proxies);
-    } else {
-      proxies = proxyCache.get(sha) as IProxy[] | null;
     }
 
     if (proxies) {
@@ -234,9 +225,9 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   }
   dateCache.save();
   proxyCache.save();
-  const resultFile = `proxies ${getFullDate()}.yaml`;
-  Deno.writeTextFileSync(`${resultFile}`, YAML.stringify({ proxies }));
-  console.log(`Result saved at ${resultFile}`);
+  const fileName = `proxies ${getFullDate()}.yaml`;
+  Deno.writeTextFileSync(`${fileName}`, YAML.stringify({ proxies }));
+  console.log(`Result saved at ${fileName}`);
   setTimeout(() => Deno.exit(), 3000);
 }
 
@@ -248,38 +239,57 @@ function filterCommand(val: string) {
 }
 
 function printHelp(): void {
-  console.log('Usage: lazything [options] string\n');
-  console.log('Argument:\nstring \t Domain to search proxies\n');
+  console.log('Usage: Lazything [options] <domain>\n');
+  console.log('Argument:\n<domain> \t Domain to search proxy\n');
   console.log('Options:');
-  console.log('-k, --key <str> \t Set github key');
-  console.log('-f, --filter <num> \t Filter result by months (default = 3)');
+  console.log('  -k, --key <str> \t Set GitHub authentication key');
+  console.log(
+    '  -f, --filter <num> \t Filter result by months (default = 3)\n'
+  );
+  console.log('Examples:');
+  console.log(
+    '  lazything -k foobar \t\t\t Set GitHub authentication key to "foobar"'
+  );
+  console.log(
+    '  lazything -f 3 foo.bar.baz \t\t Filter proxies for "foo.bar.baz" within the last 3 months'
+  );
+  console.log(
+    '  lazything --filter 3 foo.bar.baz \t Same as above using long option'
+  );
+  console.log(
+    '  lazything foo.bar.baz \t\t Search for proxies in "foo.bar.baz" without filtering'
+  );
+  console.log('  lazything -h, --help \t\t\t Display this help message');
 }
 
 function main(): void {
-  const opts = Deno.args[0];
-  const val = Deno.args[1];
+  const OPTIONS = {
+    FILTER: ['-f', '--filter'],
+    KEY: ['-k', '--key'],
+    HELP: ['-h', '--help'],
+  };
+  const args = Deno.args;
+  const opts = args[0];
+  const val = args[1];
   const key = getAuthKey();
-  switch (opts) {
-    case '-k':
+  if (args.length < 2) {
+    printHelp();
+    return;
+  }
+  switch (true) {
+    case OPTIONS.KEY.includes(opts):
       setAuthKey(val);
       break;
-    case '--key':
-      setAuthKey(val);
-      break;
-    case '-f':
+    case OPTIONS.FILTER.includes(opts):
       if (key) filterCommand(val);
+      else console.error('Authentication key is required for filtering.');
       break;
-    case '--filter':
-      if (key) filterCommand(val);
-      break;
-    case '-h':
-      printHelp();
-      break;
-    case '--help':
+    case OPTIONS.HELP.includes(opts):
       printHelp();
       break;
     default:
-      if (key) fetchAndSaveProxies(Deno.args[0]);
+      if (key) fetchAndSaveProxies(args[0]);
+      else console.error('Authentication key is required for filtering.');
       break;
   }
 }
