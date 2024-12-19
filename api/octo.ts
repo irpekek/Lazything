@@ -1,5 +1,6 @@
 import { Octokit } from 'octokit';
-import { getAuthKey, IGhMeta } from '../main.ts';
+import { IGhMeta } from '../main.ts';
+import { getAuthKey } from "../utils/authUtil.ts";
 
 const COMMIT_ENDPOINT = 'GET /repos/{owner}/{repo}/commits';
 const SEARCH_CODE_ENDPOINT = 'GET /search/code';

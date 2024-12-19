@@ -6,6 +6,7 @@ import { dateCache, proxyCache, cacheDir } from './configs/cacheConfig.ts';
 import { DateTime } from 'luxon';
 import { getLatestCommitDate, searchRepo } from './api/octo.ts';
 import { getBlob } from './api/octo.ts';
+import { getAuthKey, setAuthKey } from "./utils/authUtil.ts";
 
 export interface IGhMeta {
   name: string;
@@ -140,14 +141,6 @@ function saveProxy(proxy: ProxyType, password: string): void {
 
 function getFullDate(): string {
   return `${DateTime.now().toFormat('dd-MM-yyyy HH:mm:ss')}`; // ex: 10-12-2024 13:35:47
-}
-
-export function getAuthKey(): string {
-  return Deno.readTextFileSync('auth.txt');
-}
-
-function setAuthKey(key: string): void {
-  Deno.writeTextFileSync('auth.txt', key);
 }
 
 dateCache.load('dateCache', cacheDir);
