@@ -1,12 +1,13 @@
 #!/usr/bin/env -S deno run -A --ext=ts
-import { Octokit } from 'octokit';
 import { Buffer } from 'node:buffer';
 import YAML, { YAMLError } from 'yaml';
 import { dateCache, proxyCache, cacheDir } from './configs/cacheConfig.ts';
 // @deno-types="@types/luxon"
 import { DateTime } from 'luxon';
+import { getLatestCommitDate, searchRepo } from './api/octo.ts';
+import { getBlob } from './api/octo.ts';
 
-interface IGhMeta {
+export interface IGhMeta {
   name: string;
   path: string;
   sha: string;
@@ -41,7 +42,7 @@ interface IWsOpts {
   path: string;
   headers: string;
 }
-interface IProxy {
+export interface IProxy {
   name: string;
   type: string;
   server: string;
@@ -66,29 +67,11 @@ function isVmess(obj: unknown): obj is IVmessProxy {
 function isTrojan(obj: unknown): obj is ITrojanProxy {
   return obj !== null && typeof obj === 'object' && 'password' in obj;
 }
-function isYAMLError(obj: unknown): obj is YAMLError {
+export function isYAMLError(obj: unknown): obj is YAMLError {
   return obj !== null && typeof obj === 'object' && 'code' in obj;
 }
-function hasProxies(obj: unknown): boolean {
+export function hasProxies(obj: unknown): boolean {
   return obj !== null && typeof obj === 'object' && 'proxies' in obj;
-}
-
-async function getLatestCommitDate(
-  owner: string,
-  repo: string,
-  path: string
-): Promise<string | undefined> {
-  try {
-    const response = await octo.request('GET /repos/{owner}/{repo}/commits', {
-      owner,
-      repo,
-      path,
-      per_page: 1,
-    });
-    return response.data[0].commit.committer?.date;
-  } catch (error) {
-    throw new Error(`Failed to retrieve commit date: ${error}`);
-  }
 }
 
 async function getProxies(
@@ -97,15 +80,7 @@ async function getProxies(
   file_sha: string
 ): Promise<IProxy[] | null> {
   try {
-    const response = await octo.request(
-      'GET /repos/{owner}/{repo}/git/blobs/{file_sha}',
-      { owner, repo, file_sha }
-    );
-    if (response.status !== 200)
-      throw new Error(
-        `Error while fetching proxies with status ${response.status}`
-      );
-
+    const response = await getBlob(owner, repo, file_sha);
     const contentBuffer = Buffer.from(response.data.content, 'base64');
     const yamlContent = contentBuffer.toString('utf-8');
     const parsedYaml = YAML.parse(yamlContent, { maxAliasCount: -1 });
@@ -121,19 +96,6 @@ async function getProxies(
     } else {
       throw new Error(`Error fetching proxies: ${error}`);
     }
-  }
-}
-
-async function findProxyRepo(domain: string): Promise<IGhMeta[]> {
-  const query = `${domain} language:yaml`;
-  try {
-    const response = await octo.paginate('GET /search/code', {
-      q: query,
-      per_page: 100,
-    });
-    return response;
-  } catch (error) {
-    throw new Error(`Failed to find the repository: ${error}`);
   }
 }
 
@@ -180,7 +142,7 @@ function getFullDate(): string {
   return `${DateTime.now().toFormat('dd-MM-yyyy HH:mm:ss')}`; // ex: 10-12-2024 13:35:47
 }
 
-function getAuthKey(): string {
+export function getAuthKey(): string {
   return Deno.readTextFileSync('auth.txt');
 }
 
@@ -188,15 +150,13 @@ function setAuthKey(key: string): void {
   Deno.writeTextFileSync('auth.txt', key);
 }
 
-const octo = new Octokit({ auth: getAuthKey() });
-
 dateCache.load('dateCache', cacheDir);
 proxyCache.load('proxyCache', cacheDir);
 const proxies: object[] = [];
 const listPass = new Set<string>();
 
 async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
-  const items = await findProxyRepo(domain);
+  const items = await searchRepo(domain);
   const filteredItems = await filterByMonths(items, month);
   const totalCount = filteredItems.length;
   console.log(`Found: ${totalCount} repository`);
@@ -231,35 +191,26 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   setTimeout(() => Deno.exit(), 3000);
 }
 
-// * Command Prog func
-
 function filterCommand(val: string) {
   const month = Number(val);
   if (Deno.args[2] && !isNaN(month)) fetchAndSaveProxies(Deno.args[2], month);
 }
 
 function printHelp(): void {
-  console.log('Usage: Lazything [options] <domain>\n');
-  console.log('Argument:\n<domain> \t Domain to search proxy\n');
-  console.log('Options:');
-  console.log('  -k, --key <str> \t Set GitHub authentication key');
-  console.log(
-    '  -f, --filter <num> \t Filter result by months (default = 3)\n'
-  );
-  console.log('Examples:');
-  console.log(
-    '  lazything -k foobar \t\t\t Set GitHub authentication key to "foobar"'
-  );
-  console.log(
-    '  lazything -f 3 foo.bar.baz \t\t Filter proxies for "foo.bar.baz" within the last 3 months'
-  );
-  console.log(
-    '  lazything --filter 3 foo.bar.baz \t Same as above using long option'
-  );
-  console.log(
-    '  lazything foo.bar.baz \t\t Search for proxies in "foo.bar.baz" without filtering'
-  );
-  console.log('  lazything -h, --help \t\t\t Display this help message');
+  console.log(`
+    Usage: Lazything [options] <domain>\n
+    Argument:
+    <domain> \t Domain to search proxy\n
+    Options:
+      -k, --key <str> \t\t Set GitHub authentication key
+      -f, --filter <num> \t Filter result by months (default = 3)\n
+    Examples:
+      lazything -k foobar \t\t Set GitHub authentication key to "foobar"
+      lazything -f 3 foo.bar.baz \t Filter proxies for "foo.bar.baz" within the last 3 months
+      lazything --filter 3 foo.bar.baz \t Same as above using long option
+      lazything foo.bar.baz \t\t Search for proxies in "foo.bar.baz" without filtering
+      lazything -h, --help \t\t Display this help message
+    `);
 }
 
 function main(): void {
