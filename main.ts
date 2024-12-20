@@ -153,7 +153,7 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   const filteredItems = await filterByMonths(items, month);
   const totalCount = filteredItems.length;
   console.log(`Found: ${totalCount} repository`);
-  if(totalCount === 0) Deno.exit()
+  if (totalCount === 0) Deno.exit();
   for (const [index, item] of filteredItems.entries()) {
     const {
       repository: {
@@ -217,7 +217,7 @@ function main(): void {
   const opts = args[0];
   const val = args[1];
   const key = getAuthKey();
-  if (args.length < 2) {
+  if (args.length === 0) {
     printHelp();
     return;
   }
