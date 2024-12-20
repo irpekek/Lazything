@@ -26,7 +26,7 @@ export async function getLatestCommitDate(
 }
 
 export async function searchRepo(domain: string): Promise<IGhMeta[]> {
-  const query = `${domain} language:yaml`;
+  const query = `"proxies:" ${domain} language:yaml`;
   try {
     const response = await octo.paginate(SEARCH_CODE_ENDPOINT, {
       q: query,
