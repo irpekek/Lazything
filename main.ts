@@ -7,6 +7,8 @@ import { DateTime } from 'luxon';
 import { getLatestCommitDate, searchRepo } from './api/octo.ts';
 import { getBlob } from './api/octo.ts';
 import { getAuthKey, setAuthKey } from './utils/authUtil.ts';
+import { loading } from 'cli-loading-animation';
+import logUpdate from 'log-update';
 
 export interface IGhMeta {
   name: string;
@@ -143,17 +145,30 @@ function getFullDate(): string {
   return `${DateTime.now().toFormat('dd-MM-yyyy HH:mm:ss')}`; // ex: 10-12-2024 13:35:47
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 dateCache.load('dateCache', cacheDir);
 proxyCache.load('proxyCache', cacheDir);
 const proxies: object[] = [];
 const listPass = new Set<string>();
+const { start: startSearchAnim, stop: stopSearchAnim } = loading(
+  'Searching repository...'
+);
+const { start: startFilterAnim, stop: stopFilterAnim } = loading(
+  'Filtering repository...'
+);
 
 async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
+  startSearchAnim();
   const items = await searchRepo(domain);
+  stopSearchAnim();
+  startFilterAnim();
   const filteredItems = await filterByMonths(items, month);
+  stopFilterAnim();
   const totalCount = filteredItems.length;
-  console.log(`Found: ${totalCount} repository`);
+  logUpdate(`Found: ${totalCount} repository`);
   if (totalCount === 0) Deno.exit();
+  await sleep(3000);
+  logUpdate.clear();
   for (const [index, item] of filteredItems.entries()) {
     const {
       repository: {
@@ -163,7 +178,7 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
       sha,
     } = item;
 
-    console.log(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
+    logUpdate(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
     let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
     if (!proxies) {
       proxies = await getProxies(owner, repo, sha);
@@ -177,11 +192,15 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
       }
     }
   }
+  await sleep(2000);
+  logUpdate.clear();
+  logUpdate(`Found: ${proxies.length} proxies`);
   dateCache.save();
   proxyCache.save();
   const fileName = `proxies ${getFullDate()}.yaml`;
   Deno.writeTextFileSync(`${fileName}`, YAML.stringify({ proxies }));
-  console.log(`Result saved at ${fileName}`);
+  await sleep(2000);
+  logUpdate(`Result saved at ${fileName}`);
   setTimeout(() => Deno.exit(), 3000);
 }
 
