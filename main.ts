@@ -6,7 +6,7 @@ import { dateCache, proxyCache, cacheDir } from './configs/cacheConfig.ts';
 import { DateTime } from 'luxon';
 import { getLatestCommitDate, searchRepo } from './api/octo.ts';
 import { getBlob } from './api/octo.ts';
-import { getAuthKey, setAuthKey } from "./utils/authUtil.ts";
+import { getAuthKey, setAuthKey } from './utils/authUtil.ts';
 
 export interface IGhMeta {
   name: string;
@@ -153,6 +153,7 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   const filteredItems = await filterByMonths(items, month);
   const totalCount = filteredItems.length;
   console.log(`Found: ${totalCount} repository`);
+  if(totalCount === 0) Deno.exit()
   for (const [index, item] of filteredItems.entries()) {
     const {
       repository: {
