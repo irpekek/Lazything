@@ -7,7 +7,9 @@
   },
   "imports": {
     "@types/luxon": "npm:@types/luxon@^3.4.2",
+    "cli-loading-animation": "npm:cli-loading-animation@^1.0.6",
     "flat-cache": "npm:flat-cache@^6.1.4",
+    "log-update": "npm:log-update@^6.1.0",
     "luxon": "npm:luxon@^3.5.0",
     "octokit": "npm:octokit@^4.0.2",
     "yaml": "npm:yaml@^2.6.1"
