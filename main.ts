@@ -226,30 +226,6 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
       await sleep(1000 * 90); // Wait for 90 Second
     }
   }
-  // await Promise.all(promiseProxy);
-  // for (const [index, item] of filteredItems.entries()) {
-  //   const {
-  //     repository: {
-  //       owner: { login: owner },
-  //       name: repo,
-  //     },
-  //     sha,
-  //   } = item;
-
-  //   logUpdate(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
-  //   let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
-  //   if (!proxies) {
-  //     proxies = await getProxies(owner, repo, sha);
-  //     proxyCache.set(sha, proxies);
-  //   }
-
-  //   if (proxies) {
-  //     for (const proxy of proxies) {
-  //       if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
-  //       if (isVmess(proxy)) saveProxy(proxy, proxy.uuid);
-  //     }
-  //   }
-  // }
   await sleep(2000);
   logUpdate.clear();
   logUpdate(`Found: ${proxies.length} proxies`);
