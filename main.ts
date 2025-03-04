@@ -102,7 +102,8 @@ async function getProxies(
     if (isYAMLError(error)) {
       if (
         error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
-        error.code === 'DUPLICATE_KEY'
+        error.code === 'DUPLICATE_KEY' ||
+        error.code === 'MULTILINE_IMPLICIT_KEY'
       )
         return null;
       throw new Error(`YAML parsing error: ${error.message}`);
