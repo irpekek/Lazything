@@ -76,6 +76,16 @@ export function hasProxies(obj: unknown): boolean {
   return obj !== null && typeof obj === 'object' && 'proxies' in obj;
 }
 
+function styleBlockToFlow(content: string): string {
+  return content
+    .replace(/-\s*{/g, '- ')
+    .replace(/, /g, '\n    ')
+    .replace(/:\s*{path:/g, ':\n      path:')
+    .replace(/headers:\s*{/g, '  headers: {')
+    .replace(/:\s*{Host:/g, ':\n        Host:')
+    .replace(/}/g, '');
+}
+
 async function getProxies(
   owner: string,
   repo: string,
@@ -85,15 +95,14 @@ async function getProxies(
     const response = await getBlob(owner, repo, file_sha);
     const contentBuffer = Buffer.from(response.data.content, 'base64');
     const yamlContent = contentBuffer.toString('utf-8');
-    const parsedYaml = YAML.parse(yamlContent, { maxAliasCount: -1 });
+    const flowStyle = styleBlockToFlow(yamlContent);
+    const parsedYaml = YAML.parse(flowStyle, { maxAliasCount: -1 });
     return hasProxies(parsedYaml) ? parsedYaml.proxies : null;
   } catch (error) {
     if (isYAMLError(error)) {
-      console.log(error.code);
       if (
         error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
-        error.code === 'DUPLICATE_KEY' ||
-        error.code === 'BLOCK_IN_FLOW'
+        error.code === 'DUPLICATE_KEY'
       )
         return null;
       throw new Error(`YAML parsing error: ${error.message}`);
