@@ -1,14 +1,13 @@
 #!/usr/bin/env -S deno run -A --ext=ts
-import { Buffer } from 'node:buffer';
-import YAML, { YAMLError } from 'yaml';
-import { dateCache, proxyCache, cacheDir } from './configs/cacheConfig.ts';
-// @deno-types="@types/luxon"
-import { DateTime } from 'luxon';
-import { getLatestCommitDate, searchRepo } from './api/octo.ts';
-import { getBlob } from './api/octo.ts';
-import { getAuthKey, setAuthKey } from './utils/authUtil.ts';
 import { loading } from 'cli-loading-animation';
 import logUpdate from 'log-update';
+import { DateTime } from 'luxon';
+import { Buffer } from 'node:buffer';
+import pLimit from 'p-limit';
+import YAML, { YAMLError } from 'yaml';
+import { getBlob, getLatestCommitDate, searchRepo } from './api/octo.ts';
+import { cacheDir, dateCache, proxyCache } from './configs/cacheConfig.ts';
+import { getAuthKey, setAuthKey } from './utils/authUtil.ts';
 
 export interface IGhMeta {
   name: string;
@@ -90,9 +89,11 @@ async function getProxies(
     return hasProxies(parsedYaml) ? parsedYaml.proxies : null;
   } catch (error) {
     if (isYAMLError(error)) {
+      console.log(error.code);
       if (
         error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
-        error.code === 'DUPLICATE_KEY'
+        error.code === 'DUPLICATE_KEY' ||
+        error.code === 'BLOCK_IN_FLOW'
       )
         return null;
       throw new Error(`YAML parsing error: ${error.message}`);
@@ -107,29 +108,41 @@ async function filterByMonths(
   months = 3
 ): Promise<IGhMeta[]> {
   const filteredItems: IGhMeta[] = [];
-  for (const item of items) {
-    const {
-      repository: {
-        owner: { login: owner },
-        name: repo,
-      },
-      path,
-      sha,
-    } = item;
+  const limit = pLimit(50);
 
-    let itemDate = dateCache.get<string | undefined>(sha);
+  const datePromises = items.map((item) => {
+    return limit(async () => {
+      const {
+        repository: {
+          owner: { login: owner },
+          name: repo,
+        },
+        path,
+        sha,
+      } = item;
 
-    if (!itemDate) {
-      itemDate = await getLatestCommitDate(owner, repo, path);
-      dateCache.set(sha, itemDate);
-    }
+      let itemDate = dateCache.get<string | undefined>(sha);
 
-    if (itemDate) {
-      const commitDate = DateTime.fromISO(itemDate).toMillis();
-      const choosenDate = DateTime.now().minus({ months }).toMillis();
-      if (commitDate >= choosenDate) filteredItems.push(item);
+      if (!itemDate) {
+        itemDate = await getLatestCommitDate(owner, repo, path);
+        dateCache.set(sha, itemDate);
+      }
+
+      if (itemDate) {
+        const commitDate = DateTime.fromISO(itemDate).toMillis();
+        const choosenDate = DateTime.now().minus({ months }).toMillis();
+        if (commitDate >= choosenDate) filteredItems.push(item);
+      }
+    });
+  });
+
+  for (let i = 0; i < datePromises.length; i += 50) {
+    await Promise.all(datePromises.slice(i, i + 50));
+    if (i + 50 < datePromises.length) {
+      await sleep(70000); // Wait for 70second
     }
   }
+
   return filteredItems;
 }
 
@@ -144,11 +157,10 @@ function saveProxy(proxy: ProxyType, password: string): void {
 function getFullDate(): string {
   return `${DateTime.now().toFormat('dd-MM-yyyy HH:mm:ss')}`; // ex: 10-12-2024 13:35:47
 }
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 dateCache.load('dateCache', cacheDir);
 proxyCache.load('proxyCache', cacheDir);
-const proxies: object[] = [];
+const proxies: IProxy[] = [];
 const listPass = new Set<string>();
 const { start: startSearchAnim, stop: stopSearchAnim } = loading(
   'Searching repository...'
@@ -169,29 +181,65 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   if (totalCount === 0) Deno.exit();
   await sleep(3000);
   logUpdate.clear();
-  for (const [index, item] of filteredItems.entries()) {
-    const {
-      repository: {
-        owner: { login: owner },
-        name: repo,
-      },
-      sha,
-    } = item;
 
-    logUpdate(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
-    let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
-    if (!proxies) {
-      proxies = await getProxies(owner, repo, sha);
-      proxyCache.set(sha, proxies);
-    }
+  const limit = pLimit(50); // Throttle every 50 concurrent request
 
-    if (proxies) {
-      for (const proxy of proxies) {
-        if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
-        if (isVmess(proxy)) saveProxy(proxy, proxy.uuid);
+  const promiseProxy = filteredItems.map((item, index) => {
+    return limit(async () => {
+      const {
+        repository: {
+          owner: { login: owner },
+          name: repo,
+        },
+        sha,
+      } = item;
+
+      logUpdate(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
+      let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
+      if (!proxies) {
+        proxies = await getProxies(owner, repo, sha);
+        proxyCache.set(sha, proxies);
       }
+
+      if (proxies) {
+        for (const proxy of proxies) {
+          if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
+          if (isVmess(proxy)) saveProxy(proxy, proxy.uuid);
+        }
+      }
+    });
+  });
+
+  for (let i = 0; i < promiseProxy.length; i += 50) {
+    await Promise.all(promiseProxy.slice(i, i + 50));
+    if (i + 50 < promiseProxy.length) {
+      await sleep(1000 * 90); // Wait for 90 Second
     }
   }
+  // await Promise.all(promiseProxy);
+  // for (const [index, item] of filteredItems.entries()) {
+  //   const {
+  //     repository: {
+  //       owner: { login: owner },
+  //       name: repo,
+  //     },
+  //     sha,
+  //   } = item;
+
+  //   logUpdate(`Fetching ${index + 1} of ${totalCount}: ${repo} - ${owner}`);
+  //   let proxies = proxyCache.get<IProxy[] | undefined | null>(sha);
+  //   if (!proxies) {
+  //     proxies = await getProxies(owner, repo, sha);
+  //     proxyCache.set(sha, proxies);
+  //   }
+
+  //   if (proxies) {
+  //     for (const proxy of proxies) {
+  //       if (isTrojan(proxy)) saveProxy(proxy, proxy.password);
+  //       if (isVmess(proxy)) saveProxy(proxy, proxy.uuid);
+  //     }
+  //   }
+  // }
   await sleep(2000);
   logUpdate.clear();
   logUpdate(`Found: ${proxies.length} proxies`);

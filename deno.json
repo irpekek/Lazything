@@ -12,6 +12,7 @@
     "log-update": "npm:log-update@^6.1.0",
     "luxon": "npm:luxon@^3.5.0",
     "octokit": "npm:octokit@^4.0.2",
+    "p-limit": "npm:p-limit@^6.2.0",
     "yaml": "npm:yaml@^2.6.1"
   }
 }
