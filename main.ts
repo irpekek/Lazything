@@ -183,6 +183,12 @@ async function fetchAndSaveProxies(domain: string, month = 3): Promise<void> {
   startSearchAnim();
   const items = await searchRepo(domain);
   stopSearchAnim();
+  logUpdate(`Filtering ${items.length} proxy`);
+  sleep(1000);
+  if (items.length >= 300)
+    logUpdate('Too many repositories found, filtering may take a while');
+  sleep(2000);
+  logUpdate.clear();
   startFilterAnim();
   const filteredItems = await filterByMonths(items, month);
   stopFilterAnim();
