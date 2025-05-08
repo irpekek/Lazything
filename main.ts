@@ -100,13 +100,15 @@ async function getProxies(
     return hasProxies(parsedYaml) ? parsedYaml.proxies : null;
   } catch (error) {
     if (isYAMLError(error)) {
-      if (
-        error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
-        error.code === 'DUPLICATE_KEY' ||
-        error.code === 'MULTILINE_IMPLICIT_KEY'
-      )
-        return null;
-      throw new Error(`YAML parsing error: ${error.message}`);
+      //@ Too many shitty configuration from cloud, so replace it with null
+      // if (
+      //   error.code === 'BLOCK_AS_IMPLICIT_KEY' ||
+      //   error.code === 'DUPLICATE_KEY' ||
+      //   error.code === 'MULTILINE_IMPLICIT_KEY'
+      // )
+      //   return null;
+
+      return null;
     } else {
       throw new Error(`Error fetching proxies: ${error}`);
     }
