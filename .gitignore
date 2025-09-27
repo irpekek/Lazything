@@ -1,4 +1,3 @@
-deno.lock
 data.json
 proxies*.yaml
 auth.txt
