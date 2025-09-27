@@ -1,8 +1,10 @@
 import { FlatCache } from 'flat-cache';
 import { userInfo } from 'node:os';
 
+// Cache directory locations
 export const cacheDir = `${userInfo().homedir}/.cache/lazything/cache`
 
+// Cache of proxies
 export const proxyCache = new FlatCache({
   cacheDir,
   ttl: 1000 * 60 * 60 * 2, // 2 hour
@@ -11,6 +13,7 @@ export const proxyCache = new FlatCache({
   cacheId: 'proxyCache',
 });
 
+// Cache of date of the latest commit
 export const dateCache = new FlatCache({
   cacheDir,
   ttl: 1000 * 60 * 60, // 1 hour
