@@ -3,8 +3,7 @@
 
 Lazything is a program designed to search for public VPN services from public GitHub repositories. Below is a detailed guide on how to install and use Lazything.
 
-
-
+<br>
 
 ## Installation
 
@@ -30,3 +29,13 @@ Once installed, you can use Lazything to search for VPN networks by executing th
 Replace foo.bar.baz with the server name you are searching for. The program will look for VPN networks that include this server name.
 
 For more information about the usage and available options, you can run the program with the --help flag
+
+## Build (Not Recommended)
+
+To build Lazything, you can run the following command:
+
+```bash
+deno task build
+```
+
+This will create a new executable file called lazything in the current directory with __gigantic file size__.
