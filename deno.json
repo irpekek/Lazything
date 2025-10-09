@@ -14,5 +14,13 @@
     "octokit": "npm:octokit@^4.0.2",
     "p-limit": "npm:p-limit@^6.2.0",
     "yaml": "npm:yaml@^2.6.1"
+  },
+  "fmt": {
+    "singleQuote": true
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
   }
 }
