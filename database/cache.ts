@@ -1,5 +1,3 @@
-import pLimit from 'p-limit';
-
 type Bucket = 'dateCache' | 'proxyCache' | 'searchCodeCache';
 
 interface CacheSetOptions {
@@ -46,34 +44,38 @@ export class Cache {
    * @returns A Promise that resolves to an array of keys for the fragments.
    */
   private async fragment<T>(key: string, value: T, expireIn: number) {
-    let chunks: Uint8Array[] = [];
     const subKey: KeyOfChunks = [];
     const buf = new TextEncoder().encode(JSON.stringify(value));
 
     // if the buffer is more than 64KB, slice it into a couple of chunks
+    let chunks: Uint8Array[] = [];
     if (buf.length > this.CHUNK_SIZE) {
       chunks = this.sliceBufferToChunks(buf, this.CHUNK_SIZE);
     } else chunks.push(buf);
 
-    const chunkPromise = chunks.map(async (chunk, i) => {
+    // Build subkey
+    const atomic = this._database.atomic();
+    for (const [i, c] of chunks.entries()) {
       const chunkKey = `${key}_${i}`;
       subKey.push(chunkKey);
-      try {
-        await this._database.set([this._bucket, `${chunkKey}`], chunk, {
-          expireIn,
-        });
-      } catch (error: unknown) {
-        if (error instanceof Error) {
-          throw new Error(
-            `Failed to create fragment for key: ${chunkKey}, ${error.message}`,
-          );
-        }
-        throw new Error(
-          `Unexpected error while create fragment for key: ${chunkKey}, ${error}`,
-        );
+      atomic.set([this._bucket, chunkKey] as const, c, { expireIn });
+    }
+
+    // Add the main entry: key -> subKey
+    atomic.set([this._bucket, key] as const, subKey, { expireIn });
+
+    // commit atomic
+    try {
+      const commit = await atomic.commit();
+      if (!commit.ok) {
+        throw new Error(`Atomic commit failed for fragment key: ${key}`);
       }
-    });
-    await Promise.all(chunkPromise);
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`Failed to fragment key: ${key}, ${error.message}`);
+      }
+      throw new Error(`Unexpected error fragmenting key: ${key} - ${error}`);
+    }
 
     return subKey;
   }
@@ -85,31 +87,34 @@ export class Cache {
    * @returns A Promise that resolves to a Uint8Array containing the joined fragments.
    */
   private async readFragment(subKey: KeyOfChunks) {
-    const limiter = pLimit(5);
+    if (subKey.length === 0) {
+      throw new Error('No subKeys provided for reading fragments');
+    }
 
-    const subKeyPromises = subKey.map((k, i) =>
-      limiter(async () => {
-        try {
-          const result = await this._database.get<Uint8Array>([
-            this._bucket,
-            k,
-          ]);
-          if (!result.value) return null;
-          return result.value;
-        } catch (error: unknown) {
-          if (error instanceof Error) {
-            throw new Error(
-              `Failed to read fragment of key: ${k}_${i}, ${error.message}`,
-            );
-          }
-          throw new Error(
-            `Unexpected error while read fragment of key: ${k}_${i}, ${error}`,
-          );
-        }
-      })
-    );
-    const chunks = await Promise.all(subKeyPromises);
-    const validChunks = chunks.filter((c): c is Uint8Array => c !== null);
+    const val = subKey.map((key) => [this._bucket, key] as const);
+
+    let results: Deno.KvEntryMaybe<Uint8Array>[];
+    try {
+      results = await this._database.getMany<Uint8Array[]>(val);
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        throw new Error(
+          `Failed to read fragment of key: ${subKey}, ${error.message}`,
+        );
+      }
+      throw new Error(
+        `Unexpected error while read fragment of key: ${subKey}, ${error}`,
+      );
+    }
+    const chunks = results.map((result) => result.value);
+    const validChunks = chunks.filter((c): c is Uint8Array => c !== null); // Filter out null chunks
+
+    // Check if all fragments are present
+    if (validChunks.length !== subKey.length) {
+      throw new Error(
+        `Cache fragments incomplete for keys: ${subKey.join(', ')}`,
+      );
+    }
 
     const totalLength = validChunks.reduce((sum, arr) => sum + arr.length, 0);
     const joinedBuffer = new Uint8Array(totalLength);
@@ -136,10 +141,7 @@ export class Cache {
     options: CacheSetOptions = { expireIn: this._expiredIn },
   ) {
     try {
-      const subKey = await this.fragment(key, value, options.expireIn);
-      await this._database.set([this._bucket, key], subKey, {
-        expireIn: options.expireIn,
-      });
+      await this.fragment(key, value, options.expireIn);
     } catch (error: unknown) {
       if (error instanceof Error) {
         throw new Error(
@@ -161,7 +163,9 @@ export class Cache {
   public async get<T>(key: string): Promise<T | null> {
     let joinedBuffer: Uint8Array;
     try {
-      const result = await this._database.get<KeyOfChunks>([this._bucket, key]);
+      const result = await this._database.get<KeyOfChunks>(
+        [this._bucket, key] as const,
+      );
       if (!result.value) return null;
       joinedBuffer = await this.readFragment(result.value);
     } catch (error: unknown) {
