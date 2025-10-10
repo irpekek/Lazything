@@ -7,8 +7,11 @@ import { isTrojan, isVmess, isYAMLError } from '../types/guards.ts';
 import pLimit from 'p-limit';
 import { GhMeta } from '../types/git.type.d.ts';
 import { DateTime } from 'luxon';
-import { getFullDate, logUpdateSleep } from '../utils/utils.ts';
-import { loading } from 'cli-loading-animation';
+import {
+  createLoadingAnimation,
+  getFullDate,
+  logUpdateSleep,
+} from '../utils/utils.ts';
 import { dCache, pCache } from '../main.ts';
 
 export class ProxyService {
@@ -66,11 +69,8 @@ export class ProxyService {
    * @param months The number of months back from the current date to consider for filtering (Default=3).
    * @returns A Promise that resolves to an array of GhMeta that meet the date criteria.
    */
-  private async filterByMonths(items: GhMeta[], months = 3): Promise<GhMeta[]> {
+  private async filter(items: GhMeta[], months = 3): Promise<GhMeta[]> {
     const filteredItems: GhMeta[] = [];
-    const { start: startFilterAnim, stop: stopFilterAnim } = loading(
-      `Filtering repository from ${months} months back...`,
-    );
 
     const missCacheResults = await Promise.all(
       items.map(async (item) => {
@@ -93,7 +93,6 @@ export class ProxyService {
       (item): item is GhMeta => item !== null,
     );
 
-    startFilterAnim();
     const datePromises = missCache.map((item) => {
       return this.limit(async () => {
         const {
@@ -123,15 +122,12 @@ export class ProxyService {
     for (let i = 0; i < datePromises.length; i += 50) {
       await Promise.all(datePromises.slice(i, i + 50));
       if (i + 50 < datePromises.length) {
-        stopFilterAnim();
         await logUpdateSleep(
           `Filter: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`,
           this.SLEEP_DURATION,
         );
-        startFilterAnim();
       }
     }
-    stopFilterAnim();
 
     return filteredItems;
   }
@@ -163,16 +159,10 @@ export class ProxyService {
    * @returns The list of collected proxies.
    */
   public async discoverProxies(domain: string, month = 3): Promise<void> {
-    const { start: startSearchAnim, stop: stopSearchAnim } = loading(
-      'Searching repository...',
-    );
-    const { start: startFetchProxiesAnim, stop: stopFetchProxiesAnim } =
-      loading(`Fetching proxies...`);
-
     const timeStart = Date.now();
-    startSearchAnim();
+    const searchCodeAnim = createLoadingAnimation('Searching repository...');
     const items = await searchRepo(domain);
-    stopSearchAnim();
+    searchCodeAnim.stop();
     await logUpdateSleep(`Filtering ${items.length} Items`, 1000);
     if (items.length >= 300) {
       await logUpdateSleep(
@@ -181,7 +171,11 @@ export class ProxyService {
       );
     }
 
-    const filteredItems = await this.filterByMonths(items, month);
+    const filterAnim = createLoadingAnimation(
+      `Filtering repository from ${month} months back...`,
+    );
+    const filteredItems = await this.filter(items, month);
+    filterAnim.stop();
 
     const totalCount = filteredItems.length;
     await logUpdateSleep(`Found: ${totalCount} repository`, 3000);
@@ -214,7 +208,7 @@ export class ProxyService {
       (item): item is GhMeta => item !== null,
     );
 
-    startFetchProxiesAnim();
+    const fetchAnim = createLoadingAnimation('Fetching proxies...');
     const promiseProxy = missCache.map((item) => {
       return this.limit(async () => {
         const {
@@ -245,15 +239,15 @@ export class ProxyService {
     for (let i = 0; i < promiseProxy.length; i += 50) {
       await Promise.all(promiseProxy.slice(i, i + 50));
       if (i + 50 < promiseProxy.length) {
-        stopFetchProxiesAnim();
+        fetchAnim.pause();
         await logUpdateSleep(
           `Fetch: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`,
           this.SLEEP_DURATION,
         );
-        startFetchProxiesAnim();
+        fetchAnim.resume();
       }
     }
-    stopFetchProxiesAnim();
+    fetchAnim.stop();
 
     await logUpdateSleep(`Found: ${proxies.length} proxies`, 1000);
 
