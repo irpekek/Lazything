@@ -6,14 +6,14 @@ import YAML from 'yaml';
 import { isTrojan, isVmess, isYAMLError } from '../types/guards.ts';
 import pLimit from 'p-limit';
 import { GhMeta } from '../types/git.type.d.ts';
-import { dateCache, proxyCache } from '../configs/cacheConfig.ts';
 import { DateTime } from 'luxon';
-import { getFullDate, logUpdateSleep, sleep } from '../utils/utils.ts';
+import { getFullDate, logUpdateSleep } from '../utils/utils.ts';
 import { loading } from 'cli-loading-animation';
+import { dCache, pCache } from '../main.ts';
 
 export class ProxyService {
   private readonly limit = pLimit(50); // Throttle every 50 concurrent request
-  protected readonly SLEEP_DURATION = 30 * 1000; // 30 seconds
+  protected readonly SLEEP_DURATION = 10 * 1000; // 10 seconds
 
   /**
    * Checks if the given object has a 'proxies' property.
@@ -34,7 +34,7 @@ export class ProxyService {
   private async listProxies(
     owner: string,
     repo: string,
-    sha: string
+    sha: string,
   ): Promise<IProxy[] | null> {
     try {
       const response = await getBlob(owner, repo, sha);
@@ -69,22 +69,29 @@ export class ProxyService {
   private async filterByMonths(items: GhMeta[], months = 3): Promise<GhMeta[]> {
     const filteredItems: GhMeta[] = [];
     const { start: startFilterAnim, stop: stopFilterAnim } = loading(
-      `Filtering repository from ${months} months back...`
-    );
-    const { start: startRateLimitAnim, stop: stopRateLimitAnim } = loading(
-      `Filter: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`
+      `Filtering repository from ${months} months back...`,
     );
 
-    const missCache = items.filter((item) => {
-      const { sha } = item;
+    const missCacheResults = await Promise.all(
+      items.map(async (item) => {
+        const { sha } = item;
+        try {
+          const itemDate = await dCache.get<string>(sha);
+          if (!itemDate) return item; // Keep item if cache miss
+          else {
+            filteredItems.push(item); // Cache hit
+            return null;
+          }
+        } catch (error: unknown) {
+          console.log(error);
+          return null;
+        }
+      }),
+    );
 
-      const itemDate = dateCache.get<string | undefined>(sha);
-      if (!itemDate) return true;
-      else {
-        filteredItems.push(item);
-        return false;
-      }
-    });
+    const missCache = missCacheResults.filter(
+      (item): item is GhMeta => item !== null,
+    );
 
     startFilterAnim();
     const datePromises = missCache.map((item) => {
@@ -99,9 +106,13 @@ export class ProxyService {
         } = item;
 
         const itemDate = await getLatestCommitDate(owner, repo, path);
-        dateCache.set(sha, itemDate);
 
         if (itemDate) {
+          try {
+            await dCache.set(sha, itemDate);
+          } catch (error) {
+            console.log(error);
+          }
           const commitDate = DateTime.fromISO(itemDate).toMillis();
           const choosenDate = DateTime.now().minus({ months }).toMillis();
           if (commitDate >= choosenDate) filteredItems.push(item);
@@ -113,9 +124,10 @@ export class ProxyService {
       await Promise.all(datePromises.slice(i, i + 50));
       if (i + 50 < datePromises.length) {
         stopFilterAnim();
-        startRateLimitAnim();
-        await sleep(this.SLEEP_DURATION);
-        stopRateLimitAnim();
+        await logUpdateSleep(
+          `Filter: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`,
+          this.SLEEP_DURATION,
+        );
         startFilterAnim();
       }
     }
@@ -135,7 +147,7 @@ export class ProxyService {
     proxy: ProxyType,
     password: string,
     proxies: IProxy[],
-    listPass: Set<string>
+    listPass: Set<string>,
   ): void {
     // Prevent duplicate proxy
     if (!listPass.has(password)) {
@@ -152,24 +164,20 @@ export class ProxyService {
    */
   public async discoverProxies(domain: string, month = 3): Promise<void> {
     const { start: startSearchAnim, stop: stopSearchAnim } = loading(
-      'Searching repository...'
+      'Searching repository...',
     );
     const { start: startFetchProxiesAnim, stop: stopFetchProxiesAnim } =
       loading(`Fetching proxies...`);
-    const { start: startRateLimitAnim, stop: stopRateLimitAnim } = loading(
-      `Fetch: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`
-    );
 
     const timeStart = Date.now();
     startSearchAnim();
     const items = await searchRepo(domain);
     stopSearchAnim();
-    console.log(items.length);
     await logUpdateSleep(`Filtering ${items.length} Items`, 1000);
     if (items.length >= 300) {
       await logUpdateSleep(
         'Too many repositories found, filtering may take a while',
-        2000
+        2000,
       );
     }
 
@@ -181,20 +189,30 @@ export class ProxyService {
 
     const proxies: IProxy[] = [];
     const listPass = new Set<string>();
-    const missCache = filteredItems.filter((item) => {
-      const { sha } = item;
 
-      const pc = proxyCache.get<IProxy[] | undefined | null>(sha);
-      if (pc === undefined || pc === null) return true;
-      else {
-        for (const p of pc) {
-          if (isTrojan(p)) this.saveProxy(p, p.password, proxies, listPass);
-          if (isVmess(p)) this.saveProxy(p, p.uuid, proxies, listPass);
+    const missCacheResults = await Promise.all(
+      filteredItems.map(async (item) => {
+        const { sha } = item;
+        try {
+          const pc = await pCache.get<IProxy[]>(sha);
+          if (pc === undefined || pc === null) return item; // Cache miss
+          else {
+            for (const p of pc) {
+              if (isTrojan(p)) this.saveProxy(p, p.password, proxies, listPass);
+              if (isVmess(p)) this.saveProxy(p, p.uuid, proxies, listPass);
+            }
+            return null; // Cache hit
+          }
+        } catch (error) {
+          console.log(error);
+          return null;
         }
-        return false;
-      }
-    });
+      }),
+    );
 
+    const missCache = missCacheResults.filter(
+      (item): item is GhMeta => item !== null,
+    );
 
     startFetchProxiesAnim();
     const promiseProxy = missCache.map((item) => {
@@ -208,9 +226,14 @@ export class ProxyService {
         } = item;
 
         const pc = await this.listProxies(owner, repo, sha);
-        proxyCache.set(sha, pc); // set cache proxies of current file
 
         if (pc) {
+          try {
+            await pCache.set(sha, pc);
+          } catch (error: unknown) {
+            console.log(error);
+          }
+
           for (const p of pc) {
             if (isTrojan(p)) this.saveProxy(p, p.password, proxies, listPass);
             if (isVmess(p)) this.saveProxy(p, p.uuid, proxies, listPass);
@@ -223,19 +246,16 @@ export class ProxyService {
       await Promise.all(promiseProxy.slice(i, i + 50));
       if (i + 50 < promiseProxy.length) {
         stopFetchProxiesAnim();
-        startRateLimitAnim();
-        await sleep(this.SLEEP_DURATION);
-        stopRateLimitAnim();
+        await logUpdateSleep(
+          `Fetch: Throttling, wait for ${this.SLEEP_DURATION / 1000} seconds`,
+          this.SLEEP_DURATION,
+        );
         startFetchProxiesAnim();
       }
     }
     stopFetchProxiesAnim();
 
     await logUpdateSleep(`Found: ${proxies.length} proxies`, 1000);
-
-    // Save cache
-    dateCache.save();
-    proxyCache.save();
 
     const fileName = `proxies ${getFullDate()}.yaml`;
     Deno.writeTextFileSync(`${fileName}`, YAML.stringify({ proxies }));

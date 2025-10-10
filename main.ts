@@ -1,11 +1,20 @@
-#!/usr/bin/env -S deno run -A --ext=ts
+#!/usr/bin/env -S deno run -A --ext=ts --unstable-kv
+import { handleCLI } from './cmd/cli.ts';
+import { Database } from './database/connection.ts';
+import { Cache } from './database/cache.ts';
 
-import { cacheDir, dateCache, proxyCache } from './configs/cacheConfig.ts';
-import { handleCLI } from "./cmd/cli.ts";
+let pCache: Cache, dCache: Cache;
+try {
+  const db = await Database.connect(`${Deno.cwd()}/database`, 'cache.db');
+  // load caches at startup (global init)
+  pCache = new Cache('proxyCache', db);
+  dCache = new Cache('dateCache', db);
+} catch (error: unknown) {
+  console.log(error);
+  Deno.exit(1);
+}
 
-// load caches at startup (global init)
-dateCache.load('dateCache', cacheDir);
-proxyCache.load('proxyCache', cacheDir);
+export { dCache, pCache };
 
 async function main(): Promise<void> {
   await handleCLI(Deno.args);
