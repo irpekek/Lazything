@@ -14,5 +14,5 @@ export async function execute(domain: string, month: number): Promise<void> {
   }
 
   const service = new ProxyService();
-  await service.discoverProxies(domain, month);
+  await service.discover(domain, month);
 }

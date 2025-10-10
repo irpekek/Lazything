@@ -64,7 +64,7 @@ export class ProxyService {
   }
 
   /**
-   * Filters GitHub items by commit date (within months).
+   * Filters GitHub repository by commit date (within months).
    * @param items An array of GhMeta to filter.
    * @param months The number of months back from the current date to consider for filtering (Default=3).
    * @returns A Promise that resolves to an array of GhMeta that meet the date criteria.
@@ -158,12 +158,12 @@ export class ProxyService {
    * @param months Filter by months (default 3).
    * @returns The list of collected proxies.
    */
-  public async discoverProxies(domain: string, month = 3): Promise<void> {
+  public async discover(domain: string, month = 3): Promise<void> {
     const timeStart = Date.now();
-    const searchCodeAnim = createLoadingAnimation('Searching repository...');
+    const searchCodeAnim = createLoadingAnimation('Searching repositories...');
     const items = await searchRepo(domain);
     searchCodeAnim.stop();
-    await logUpdateSleep(`Filtering ${items.length} Items`, 1000);
+    await logUpdateSleep(`Found: ${items.length} repositories...`, 1000);
     if (items.length >= 300) {
       await logUpdateSleep(
         'Too many repositories found, filtering may take a while',
@@ -172,13 +172,16 @@ export class ProxyService {
     }
 
     const filterAnim = createLoadingAnimation(
-      `Filtering repository from ${month} months back...`,
+      `Filtering repositories from ${month} months back...`,
     );
     const filteredItems = await this.filter(items, month);
     filterAnim.stop();
 
     const totalCount = filteredItems.length;
-    await logUpdateSleep(`Found: ${totalCount} repository`, 3000);
+    await logUpdateSleep(
+      `Found: ${totalCount} repositories from ${month} months back`,
+      3000,
+    );
     if (totalCount === 0) Deno.exit(1);
 
     const proxies: IProxy[] = [];
@@ -189,14 +192,13 @@ export class ProxyService {
         const { sha } = item;
         try {
           const pc = await pCache.get<IProxy[]>(sha);
-          if (pc === undefined || pc === null) return item; // Cache miss
-          else {
-            for (const p of pc) {
-              if (isTrojan(p)) this.saveProxy(p, p.password, proxies, listPass);
-              if (isVmess(p)) this.saveProxy(p, p.uuid, proxies, listPass);
-            }
-            return null; // Cache hit
+          if (!pc) return item; // Cache miss
+
+          for (const p of pc) {
+            if (isTrojan(p)) this.saveProxy(p, p.password, proxies, listPass);
+            if (isVmess(p)) this.saveProxy(p, p.uuid, proxies, listPass);
           }
+          return null; // Cache hit
         } catch (error) {
           console.log(error);
           return null;

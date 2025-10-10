@@ -1,5 +1,5 @@
-import {type YAMLError} from 'yaml';
-import { ITrojanProxy, IVmessProxy } from "./proxy.type.d.ts";
+import { type YAMLError } from 'yaml';
+import { ITrojanProxy, IVmessProxy } from './proxy.type.d.ts';
 
 /**
  * Checks if the given object is a Error from the YAML library.

@@ -70,10 +70,11 @@ export async function getBlob(owner: string, repo: string, file_sha: string) {
       repo,
       file_sha,
     });
-    if (response.status !== 200)
+    if (response.status !== 200) {
       throw new Error(
         `Error while fetching proxies with status ${response.status}`,
       );
+    }
     return response;
   } catch (error) {
     throw new Error(`Failed getting blob: ${error}`);
